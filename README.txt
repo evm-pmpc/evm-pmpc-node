@@ -15,4 +15,4 @@ ooooooooooo.   ooo        ooooo  ooooooooooo.     ,ooooooo.
 o888o          o8o        o888o  o888o            `8888888P
 
 
-The code Requiree to run the node for EVM-PMPC
+Node for running EVM-PMPC
