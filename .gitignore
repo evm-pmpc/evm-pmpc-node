@@ -2,4 +2,7 @@
 workspace
 .idea/
 
-bin/
+.DS_Store
+
+evm-pmpc-node
+.env
