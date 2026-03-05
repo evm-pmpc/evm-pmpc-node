@@ -20,6 +20,8 @@ func main() {
 	node, err := libp2p.New(
 		libp2p.ListenAddrStrings(address),
 		libp2p.Ping(false),
+		libp2p.NATPortMap(),
+		libp2p.EnableHolePunching(),
 	)
 	if err != nil {
 		panic(err)
