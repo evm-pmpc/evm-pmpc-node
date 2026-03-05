@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
@@ -42,4 +43,16 @@ func PingPeer(ctx context.Context, h host.Host, ps *ping.PingService, addr strin
 	}
 
 	return nil
+}
+
+func NewWorkerHost(ctx context.Context, bootstrapAddrs []peer.AddrInfo) (host.Host, error) {
+	return libp2p.New(
+		libp2p.ListenAddrStrings(
+			"/ip4/0.0.0.0/tcp/0",
+			"/ip4/0.0.0.0/udp/0/quic-v1",
+		),
+		libp2p.NATPortMap(),
+		libp2p.EnableHolePunching(),
+		libp2p.EnableAutoRelayWithStaticRelays(bootstrapAddrs),
+	)
 }

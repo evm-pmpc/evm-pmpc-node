@@ -3,58 +3,68 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/discovery"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/network"
 
-	"github.com/libp2p/go-libp2p"
-	peerstore "github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peer"
+	multiaddr "github.com/multiformats/go-multiaddr"
 )
 
 func main() {
-	address := "/ip4/0.0.0.0/tcp/0"
-
-	node, err := libp2p.New(
-		libp2p.ListenAddrStrings(address),
-		libp2p.Ping(false),
-		libp2p.NATPortMap(),
-		libp2p.EnableHolePunching(),
-	)
-	if err != nil {
-		panic(err)
+	if len(os.Args) < 2 {
+		log.Fatal("[main] - Usage: evm-pmpc-node <bootstrap-multiaddr>")
 	}
 
-	pingService := network.SetupPing(node)
+	bootstrapMA, err := multiaddr.NewMultiaddr(os.Args[1])
+	if err != nil {
+		log.Fatalf("[main] - Invalid bootstrap address: %v", err)
+	}
+
+	bootstrapInfo, err := peer.AddrInfoFromP2pAddr(bootstrapMA)
+	if err != nil {
+		log.Fatalf("[main] - Invalid bootstrap peer address: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	node, err := network.NewWorkerHost(ctx, []peer.AddrInfo{*bootstrapInfo})
+	if err != nil {
+		log.Fatalf("[main] - Failed to create host: %v", err)
+	}
+
+	network.SetupPing(node)
 
 	if err := discovery.InitMDNS(node); err != nil {
-		panic(err)
+		log.Fatalf("[main] - Failed to start mDNS: %v", err)
 	}
 
-	peerInfo := peerstore.AddrInfo{
+	if err := dht.SetupDiscovery(ctx, node, *bootstrapInfo); err != nil {
+		log.Fatalf("[main] - Failed to setup DHT discovery: %v", err)
+	}
+
+	peerInfo := peer.AddrInfo{
 		ID:    node.ID(),
 		Addrs: node.Addrs(),
 	}
-	addrs, err := peerstore.AddrInfoToP2pAddrs(&peerInfo)
+	addrs, err := peer.AddrInfoToP2pAddrs(&peerInfo)
 	if err != nil {
-		panic(err)
+		log.Fatalf("[main] - Failed to get node addresses: %v", err)
 	}
 	fmt.Println("[main] - libp2p node address:", addrs[0])
 
-	if len(os.Args) > 1 {
-		if err := network.PingPeer(context.Background(), node, pingService, os.Args[1], 5); err != nil {
-			panic(err)
-		}
-	} else {
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-		<-ch
-		fmt.Println("[main] - Received signal, shutting down")
-	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
 
+	fmt.Println("[main] - Received signal, shutting down")
 	if err := node.Close(); err != nil {
-		panic(err)
+		log.Fatalf("[main] - Failed to close node: %v", err)
 	}
 }
