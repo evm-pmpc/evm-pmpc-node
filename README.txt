@@ -16,3 +16,19 @@ o888o          o8o        o888o  o888o            `8888888P
 
 
 Node for running EVM-PMPC
+
+There are bootstrap nodes ran by the team, which can be used to bootstrap the network. And then there are nodes to be ran by the users which allows you to perform MPC operations.
+
+Run the following command to build the node:
+
+On Linux/Mac:
+./build.sh
+
+On Windows:
+build.bat
+
+To run a node:
+./bin/evm-pmpc-node
+
+To run a bootstrap node:
+./bin/evm-pmpc-bootstrap
