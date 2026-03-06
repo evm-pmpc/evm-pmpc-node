@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/evm-pmpc/evm-pmpc-node/internal/keygen"
+	"github.com/evm-pmpc/evm-pmpc-node/pkg/keygen"
 	"github.com/libp2p/go-libp2p"
 	kadDHT "github.com/libp2p/go-libp2p-kad-dht"
 )

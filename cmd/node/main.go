@@ -18,7 +18,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatal("[main] - Usage: evm-pmpc-node <bootstrap-multiaddr>")
+		log.Fatal("[main] - Usage: evm-pmpc-node <bootstrap-multiaddr> [ping-address]")
 	}
 
 	bootstrapMA, err := multiaddr.NewMultiaddr(os.Args[1])
@@ -39,7 +39,16 @@ func main() {
 		log.Fatalf("[main] - Failed to create host: %v", err)
 	}
 
-	network.SetupPing(node)
+	ps := network.SetupPing(node)
+
+	if len(os.Args) == 3 {
+		pingAddr := os.Args[2]
+		go func() {
+			if err := network.PingPeer(ctx, node, ps, pingAddr, 5); err != nil {
+				log.Printf("[main] - Failed to ping peer: %v", err)
+			}
+		}()
+	}
 
 	if err := discovery.InitMDNS(node); err != nil {
 		log.Fatalf("[main] - Failed to start mDNS: %v", err)
@@ -57,7 +66,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("[main] - Failed to get node addresses: %v", err)
 	}
-	fmt.Println("[main] - libp2p node address:", addrs[0])
+	fmt.Println("[main] - libp2p node addresses:")
+	for _, addr := range addrs {
+		fmt.Printf("  - %s\n", addr)
+	}
 
 	<-ctx.Done()
 
