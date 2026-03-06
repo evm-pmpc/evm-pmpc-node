@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -20,8 +19,8 @@ const (
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	priv, err := keygen.LoadOrGenerateKey(KeyFile)
 	if err != nil {
@@ -59,9 +58,7 @@ func main() {
 		fmt.Printf("  %s/p2p/%s\n", addr, host.ID())
 	}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	<-ctx.Done()
 
 	fmt.Println("[bootstrap] - Shutting down")
 	host.Close()

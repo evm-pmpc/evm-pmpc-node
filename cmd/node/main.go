@@ -31,8 +31,8 @@ func main() {
 		log.Fatalf("[main] - Invalid bootstrap peer address: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	node, err := network.NewWorkerHost(ctx, []peer.AddrInfo{*bootstrapInfo})
 	if err != nil {
@@ -59,9 +59,7 @@ func main() {
 	}
 	fmt.Println("[main] - libp2p node address:", addrs[0])
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	<-ctx.Done()
 
 	fmt.Println("[main] - Received signal, shutting down")
 	if err := node.Close(); err != nil {
