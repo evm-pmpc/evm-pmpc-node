@@ -2,58 +2,102 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/evm-pmpc/evm-pmpc-node/pkg/config"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/keygen"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/logger"
 	"github.com/libp2p/go-libp2p"
 	kadDHT "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
+	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"go.uber.org/zap"
 )
 
-const (
-	ProtocolPrefix = "/evm-pmpc-node/0.1.0"
-	KeyFile        = "bootstrap.key"
-	Port           = "4001"
-)
-
 func main() {
+	configPath := flag.String("config", "config-bootstrap.yaml", "path to the config file")
+	flag.Parse()
+
 	logger.Init()
 	defer zap.L().Sync()
 
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		zap.L().Fatal("failed to load configuration", zap.Error(err), zap.String("path", *configPath))
+	}
+
+	if cfg.Logging.Format == "json" {
+		logger.InitJSON()
+	}
+
+	if err := run(cfg); err != nil {
+		zap.L().Fatal("application failed", zap.Error(err))
+	}
+}
+
+func run(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	priv, err := keygen.LoadOrGenerateKey(KeyFile)
+	priv, err := keygen.LoadOrGenerateKey(cfg.Identity.KeyFile)
 	if err != nil {
-		zap.L().Fatal("failed to handle identity key", zap.Error(err))
+		return fmt.Errorf("failed to handle identity key: %w", err)
+	}
+
+	cm, err := connmgr.NewConnManager(
+		cfg.Network.MinPeers,
+		cfg.Network.MaxPeers,
+		connmgr.WithGracePeriod(time.Minute),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create connection manager: %w", err)
+	}
+
+	rm, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(rcmgr.DefaultLimits.AutoScale()))
+	if err != nil {
+		return fmt.Errorf("failed to create resource manager: %w", err)
 	}
 
 	host, err := libp2p.New(
 		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings(
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", Port),
-			fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic-v1", Port),
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.Network.ListenPort),
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.Network.ListenPort),
 		),
 		libp2p.EnableNATService(),
 		libp2p.EnableRelayService(),
+		libp2p.ConnectionManager(cm),
+		libp2p.ResourceManager(rm),
 	)
 	if err != nil {
-		zap.L().Fatal("failed to create libp2p host", zap.Error(err))
+		return fmt.Errorf("failed to create libp2p host: %w", err)
 	}
+	defer func() {
+		if err := host.Close(); err != nil {
+			zap.L().Error("failed to cleanly close host", zap.Error(err))
+		}
+	}()
 
-	kadDHT, err := kadDHT.New(ctx, host,
+	dhtInstance, err := kadDHT.New(ctx, host,
 		kadDHT.Mode(kadDHT.ModeServer),
-		kadDHT.ProtocolPrefix(ProtocolPrefix),
+		kadDHT.ProtocolPrefix(protocol.ID(cfg.Discovery.ProtocolPrefix)),
 	)
 	if err != nil {
-		zap.L().Fatal("failed to create DHT", zap.Error(err))
+		return fmt.Errorf("failed to create DHT: %w", err)
 	}
+	defer func() {
+		if err := dhtInstance.Close(); err != nil {
+			zap.L().Error("failed to cleanly close DHT", zap.Error(err))
+		}
+	}()
 
-	if err = kadDHT.Bootstrap(ctx); err != nil {
-		zap.L().Fatal("failed to bootstrap DHT", zap.Error(err))
+	if err = dhtInstance.Bootstrap(ctx); err != nil {
+		return fmt.Errorf("failed to bootstrap DHT: %w", err)
 	}
 
 	zap.L().Info("bootstrap node is active",
@@ -67,6 +111,6 @@ func main() {
 
 	<-ctx.Done()
 
-	zap.L().Info("shutting down")
-	host.Close()
+	zap.L().Info("received graceful shutdown signal")
+	return nil
 }

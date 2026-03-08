@@ -9,8 +9,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const ServiceTag = "evm-pmpc-node:0.1.0"
-
 type discoveryNotifee struct {
 	h host.Host
 }
@@ -29,8 +27,8 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	}
 }
 
-func InitMDNS(h host.Host) error {
-	s := mdns.NewMdnsService(h, ServiceTag, &discoveryNotifee{h: h})
+func InitMDNS(h host.Host, rendezvous string) error {
+	s := mdns.NewMdnsService(h, rendezvous, &discoveryNotifee{h: h})
 
 	return s.Start()
 }

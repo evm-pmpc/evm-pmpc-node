@@ -1,0 +1,13 @@
+identity:
+  key_file: "bootstrap.key"
+network:
+  listen_port: 4001
+  min_peers: 50
+  max_peers: 200 
+  bootstrap_addrs: []
+discovery:
+  rendezvous: "evm-pmpc-rendezvous-room"
+  protocol_prefix: "/evm-pmpc-node/0.1.0"
+logging:
+  level: "info"
+  format: "console"

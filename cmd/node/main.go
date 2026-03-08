@@ -2,13 +2,15 @@ package main
 
 import (
 	"context"
-	"os"
+	"flag"
+	"fmt"
 	"os/signal"
 	"syscall"
 
 	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/discovery"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/network"
+	"github.com/evm-pmpc/evm-pmpc-node/pkg/config"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/keygen"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/logger"
 
@@ -17,43 +19,63 @@ import (
 	"go.uber.org/zap"
 )
 
-const KeyFile = "worker.key"
-
 func main() {
+	configPath := flag.String("config", "config.yaml", "path to the config file")
+	pingAddr := flag.String("ping", "", "optional peer address to ping after connecting")
+	flag.Parse()
+
 	logger.Init()
 	defer zap.L().Sync()
 
-	if len(os.Args) < 2 {
-		zap.L().Fatal("usage: evm-pmpc-node <bootstrap-multiaddr> [ping-address]")
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		zap.L().Fatal("failed to load configuration", zap.Error(err), zap.String("path", *configPath))
 	}
 
-	bootstrapMA, err := multiaddr.NewMultiaddr(os.Args[1])
-	if err != nil {
-		zap.L().Fatal("invalid bootstrap address", zap.Error(err))
+	if cfg.Logging.Format == "json" {
+		logger.InitJSON()
 	}
 
-	bootstrapInfo, err := peer.AddrInfoFromP2pAddr(bootstrapMA)
-	if err != nil {
-		zap.L().Fatal("invalid bootstrap peer address", zap.Error(err))
+	if err := run(cfg, *pingAddr); err != nil {
+		zap.L().Fatal("application failed", zap.Error(err))
+	}
+}
+
+func run(cfg *config.Config, pingAddr string) error {
+	var bootstrapAddrs []peer.AddrInfo
+	for _, m := range cfg.Network.BootstrapAddrs {
+		ma, err := multiaddr.NewMultiaddr(m)
+		if err != nil {
+			return fmt.Errorf("invalid bootstrap address in config (%s): %w", m, err)
+		}
+		info, err := peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			return fmt.Errorf("invalid bootstrap peer info (%s): %w", m, err)
+		}
+		bootstrapAddrs = append(bootstrapAddrs, *info)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	priv, err := keygen.LoadOrGenerateKey(KeyFile)
+	priv, err := keygen.LoadOrGenerateKey(cfg.Identity.KeyFile)
 	if err != nil {
-		zap.L().Fatal("failed to handle identity key", zap.Error(err))
+		return fmt.Errorf("failed to handle identity key: %w", err)
 	}
 
-	node, err := network.NewWorkerHost(ctx, priv, []peer.AddrInfo{*bootstrapInfo})
+	node, err := network.NewWorkerHost(ctx, priv, cfg.Network.ListenPort, cfg.Network.MinPeers, cfg.Network.MaxPeers, bootstrapAddrs)
 	if err != nil {
-		zap.L().Fatal("failed to create host", zap.Error(err))
+		return fmt.Errorf("failed to create host: %w", err)
 	}
+	defer func() {
+		if err := node.Close(); err != nil {
+			zap.L().Error("failed to cleanly close host", zap.Error(err))
+		}
+	}()
 
 	ps := network.SetupPing(node)
 
-	if len(os.Args) == 3 {
-		pingAddr := os.Args[2]
+	if pingAddr != "" {
 		go func() {
 			if err := network.PingPeer(ctx, node, ps, pingAddr, 5); err != nil {
 				zap.L().Error("failed to ping peer", zap.Error(err))
@@ -61,13 +83,19 @@ func main() {
 		}()
 	}
 
-	if err := discovery.InitMDNS(node); err != nil {
-		zap.L().Fatal("failed to start mDNS", zap.Error(err))
+	if err := discovery.InitMDNS(node, cfg.Discovery.Rendezvous); err != nil {
+		return fmt.Errorf("failed to start mDNS: %w", err)
 	}
 
-	if err := dht.SetupDiscovery(ctx, node, *bootstrapInfo); err != nil {
-		zap.L().Fatal("failed to setup DHT discovery", zap.Error(err))
+	dhtInstance, err := dht.SetupDiscovery(ctx, node, cfg.Discovery, bootstrapAddrs)
+	if err != nil {
+		return fmt.Errorf("failed to setup DHT discovery: %w", err)
 	}
+	defer func() {
+		if err := dhtInstance.Close(); err != nil {
+			zap.L().Error("failed to cleanly close DHT", zap.Error(err))
+		}
+	}()
 
 	peerInfo := peer.AddrInfo{
 		ID:    node.ID(),
@@ -75,7 +103,7 @@ func main() {
 	}
 	addrs, err := peer.AddrInfoToP2pAddrs(&peerInfo)
 	if err != nil {
-		zap.L().Fatal("failed to get node addresses", zap.Error(err))
+		return fmt.Errorf("failed to get node addresses: %w", err)
 	}
 
 	for _, addr := range addrs {
@@ -84,8 +112,6 @@ func main() {
 
 	<-ctx.Done()
 
-	zap.L().Info("received signal, shutting down")
-	if err := node.Close(); err != nil {
-		zap.L().Error("failed to close node", zap.Error(err))
-	}
+	zap.L().Info("received graceful shutdown signal")
+	return nil
 }
