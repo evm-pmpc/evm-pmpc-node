@@ -34,6 +34,7 @@ func main() {
 			fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic-v1", Port),
 		),
 		libp2p.EnableNATService(),
+		libp2p.EnableRelayService(),
 	)
 	if err != nil {
 		log.Fatalf("[bootstrap] - Failed to create libp2p host: %v", err)
