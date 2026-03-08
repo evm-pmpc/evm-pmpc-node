@@ -54,5 +54,7 @@ func NewWorkerHost(ctx context.Context, bootstrapAddrs []peer.AddrInfo) (host.Ho
 		libp2p.NATPortMap(),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoRelayWithStaticRelays(bootstrapAddrs),
+		libp2p.EnableAutoNATv2(),
+		libp2p.EnableNATService(),
 	)
 }

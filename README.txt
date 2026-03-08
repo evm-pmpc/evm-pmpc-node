@@ -37,3 +37,8 @@ To run a node:
 
 To run a bootstrap node:
 ./bin/evm-pmpc-bootstrap
+
+-----
+TODO:
+-----
+- when a bootstrap node starts, it sends its peerID to 'api'.
