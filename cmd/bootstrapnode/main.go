@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os/signal"
 	"syscall"
 
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/keygen"
+	"github.com/evm-pmpc/evm-pmpc-node/pkg/logger"
 	"github.com/libp2p/go-libp2p"
 	kadDHT "github.com/libp2p/go-libp2p-kad-dht"
+	"go.uber.org/zap"
 )
 
 const (
@@ -19,12 +20,15 @@ const (
 )
 
 func main() {
+	logger.Init()
+	defer zap.L().Sync()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	priv, err := keygen.LoadOrGenerateKey(KeyFile)
 	if err != nil {
-		log.Fatalf("[bootstrap] - Failed to handle identity key: %v", err)
+		zap.L().Fatal("failed to handle identity key", zap.Error(err))
 	}
 
 	host, err := libp2p.New(
@@ -37,7 +41,7 @@ func main() {
 		libp2p.EnableRelayService(),
 	)
 	if err != nil {
-		log.Fatalf("[bootstrap] - Failed to create libp2p host: %v", err)
+		zap.L().Fatal("failed to create libp2p host", zap.Error(err))
 	}
 
 	kadDHT, err := kadDHT.New(ctx, host,
@@ -45,22 +49,24 @@ func main() {
 		kadDHT.ProtocolPrefix(ProtocolPrefix),
 	)
 	if err != nil {
-		log.Fatalf("[bootstrap] - Failed to create DHT: %v", err)
+		zap.L().Fatal("failed to create DHT", zap.Error(err))
 	}
 
 	if err = kadDHT.Bootstrap(ctx); err != nil {
-		log.Fatalf("[bootstrap] - Failed to bootstrap DHT: %v", err)
+		zap.L().Fatal("failed to bootstrap DHT", zap.Error(err))
 	}
 
-	fmt.Println("[bootstrap] - Bootstrap Node is Active")
-	fmt.Printf("[bootstrap] - PeerID: %s\n", host.ID())
-	fmt.Println("[bootstrap] - Add these to your worker nodes:")
+	zap.L().Info("bootstrap node is active",
+		zap.String("peerID", host.ID().String()),
+	)
 	for _, addr := range host.Addrs() {
-		fmt.Printf("  %s/p2p/%s\n", addr, host.ID())
+		zap.L().Info("listening address",
+			zap.String("multiaddr", fmt.Sprintf("%s/p2p/%s", addr, host.ID())),
+		)
 	}
 
 	<-ctx.Done()
 
-	fmt.Println("[bootstrap] - Shutting down")
+	zap.L().Info("shutting down")
 	host.Close()
 }

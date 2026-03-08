@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,32 +9,45 @@ import (
 	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/discovery"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/network"
+	"github.com/evm-pmpc/evm-pmpc-node/pkg/keygen"
+	"github.com/evm-pmpc/evm-pmpc-node/pkg/logger"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	multiaddr "github.com/multiformats/go-multiaddr"
+	"go.uber.org/zap"
 )
 
+const KeyFile = "worker.key"
+
 func main() {
+	logger.Init()
+	defer zap.L().Sync()
+
 	if len(os.Args) < 2 {
-		log.Fatal("[main] - Usage: evm-pmpc-node <bootstrap-multiaddr> [ping-address]")
+		zap.L().Fatal("usage: evm-pmpc-node <bootstrap-multiaddr> [ping-address]")
 	}
 
 	bootstrapMA, err := multiaddr.NewMultiaddr(os.Args[1])
 	if err != nil {
-		log.Fatalf("[main] - Invalid bootstrap address: %v", err)
+		zap.L().Fatal("invalid bootstrap address", zap.Error(err))
 	}
 
 	bootstrapInfo, err := peer.AddrInfoFromP2pAddr(bootstrapMA)
 	if err != nil {
-		log.Fatalf("[main] - Invalid bootstrap peer address: %v", err)
+		zap.L().Fatal("invalid bootstrap peer address", zap.Error(err))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	node, err := network.NewWorkerHost(ctx, []peer.AddrInfo{*bootstrapInfo})
+	priv, err := keygen.LoadOrGenerateKey(KeyFile)
 	if err != nil {
-		log.Fatalf("[main] - Failed to create host: %v", err)
+		zap.L().Fatal("failed to handle identity key", zap.Error(err))
+	}
+
+	node, err := network.NewWorkerHost(ctx, priv, []peer.AddrInfo{*bootstrapInfo})
+	if err != nil {
+		zap.L().Fatal("failed to create host", zap.Error(err))
 	}
 
 	ps := network.SetupPing(node)
@@ -45,17 +56,17 @@ func main() {
 		pingAddr := os.Args[2]
 		go func() {
 			if err := network.PingPeer(ctx, node, ps, pingAddr, 5); err != nil {
-				log.Printf("[main] - Failed to ping peer: %v", err)
+				zap.L().Error("failed to ping peer", zap.Error(err))
 			}
 		}()
 	}
 
 	if err := discovery.InitMDNS(node); err != nil {
-		log.Fatalf("[main] - Failed to start mDNS: %v", err)
+		zap.L().Fatal("failed to start mDNS", zap.Error(err))
 	}
 
 	if err := dht.SetupDiscovery(ctx, node, *bootstrapInfo); err != nil {
-		log.Fatalf("[main] - Failed to setup DHT discovery: %v", err)
+		zap.L().Fatal("failed to setup DHT discovery", zap.Error(err))
 	}
 
 	peerInfo := peer.AddrInfo{
@@ -64,17 +75,17 @@ func main() {
 	}
 	addrs, err := peer.AddrInfoToP2pAddrs(&peerInfo)
 	if err != nil {
-		log.Fatalf("[main] - Failed to get node addresses: %v", err)
+		zap.L().Fatal("failed to get node addresses", zap.Error(err))
 	}
-	fmt.Println("[main] - libp2p node addresses:")
+
 	for _, addr := range addrs {
-		fmt.Printf("  - %s\n", addr)
+		zap.L().Info("libp2p node address", zap.String("addr", addr.String()))
 	}
 
 	<-ctx.Done()
 
-	fmt.Println("[main] - Received signal, shutting down")
+	zap.L().Info("received signal, shutting down")
 	if err := node.Close(); err != nil {
-		log.Fatalf("[main] - Failed to close node: %v", err)
+		zap.L().Error("failed to close node", zap.Error(err))
 	}
 }

@@ -2,11 +2,11 @@ package discovery
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"go.uber.org/zap"
 )
 
 const ServiceTag = "evm-pmpc-node:0.1.0"
@@ -16,13 +16,16 @@ type discoveryNotifee struct {
 }
 
 func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
-	fmt.Printf("[mDNS] - Found new peer: %s\n", pi.ID.String())
+	zap.L().Info("mDNS found new peer", zap.String("peerID", pi.ID.String()))
 
 	err := n.h.Connect(context.Background(), pi)
 	if err != nil {
-		fmt.Printf("[mDNS] - Error connecting to peer %s: %s\n", pi.ID.String(), err)
+		zap.L().Warn("mDNS failed to connect to peer",
+			zap.String("peerID", pi.ID.String()),
+			zap.Error(err),
+		)
 	} else {
-		fmt.Printf("[mDNS] - Successfully connected to peer: %s\n", pi.ID.String())
+		zap.L().Info("mDNS connected to peer", zap.String("peerID", pi.ID.String()))
 	}
 }
 

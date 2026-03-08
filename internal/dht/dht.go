@@ -10,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"github.com/libp2p/go-libp2p/p2p/discovery/util"
+	"go.uber.org/zap"
 )
 
 const (
@@ -19,27 +20,34 @@ const (
 
 func SetupDiscovery(ctx context.Context, h host.Host, bootstrapAddr peer.AddrInfo) error {
 	if err := h.Connect(ctx, bootstrapAddr); err != nil {
-		return fmt.Errorf("[dht] - failed to connect to bootstrap node: %w", err)
+		return fmt.Errorf("failed to connect to bootstrap node: %w", err)
 	}
-	fmt.Printf("[dht] - Connected to bootstrap node %s\n", bootstrapAddr.ID)
+	zap.L().Info("connected to bootstrap node", zap.String("peerID", bootstrapAddr.ID.String()))
 
 	dht, err := kadDht.New(ctx, h, kadDht.ProtocolPrefix(ProtocolPrefix))
 	if err != nil {
-		return fmt.Errorf("[dht] - failed to create DHT: %w", err)
+		return fmt.Errorf("failed to create DHT: %w", err)
 	}
 
 	if err := dht.Bootstrap(ctx); err != nil {
-		return fmt.Errorf("[dht] - failed to bootstrap DHT: %w", err)
+		return fmt.Errorf("failed to bootstrap DHT: %w", err)
 	}
 
 	routingDiscovery := routing.NewRoutingDiscovery(dht)
 	util.Advertise(ctx, routingDiscovery, Rendezvous)
-	fmt.Println("[dht] - Advertised on rendezvous:", Rendezvous)
+	zap.L().Info("advertised on rendezvous", zap.String("rendezvous", Rendezvous))
 
 	go func() {
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			peerChan, err := routingDiscovery.FindPeers(ctx, Rendezvous)
 			if err != nil {
+				zap.L().Warn("failed to find peers", zap.Error(err))
 				time.Sleep(10 * time.Second)
 				continue
 			}
@@ -50,7 +58,7 @@ func SetupDiscovery(ctx context.Context, h host.Host, bootstrapAddr peer.AddrInf
 				}
 
 				if err := h.Connect(ctx, p); err == nil {
-					fmt.Printf("[dht] - Connected to peer %s\n", p.ID)
+					zap.L().Info("connected to peer", zap.String("peerID", p.ID.String()))
 				}
 			}
 			time.Sleep(1 * time.Minute)
