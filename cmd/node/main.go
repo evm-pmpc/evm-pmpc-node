@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/discovery"
@@ -75,14 +76,6 @@ func run(cfg *config.Config, pingAddr string) error {
 
 	ps := network.SetupPing(node)
 
-	if pingAddr != "" {
-		go func() {
-			if err := network.PingPeer(ctx, node, ps, pingAddr, 5); err != nil {
-				zap.L().Error("failed to ping peer", zap.Error(err))
-			}
-		}()
-	}
-
 	if err := discovery.InitMDNS(node, cfg.Discovery.Rendezvous); err != nil {
 		return fmt.Errorf("failed to start mDNS: %w", err)
 	}
@@ -106,8 +99,20 @@ func run(cfg *config.Config, pingAddr string) error {
 		return fmt.Errorf("failed to get node addresses: %w", err)
 	}
 
+	zap.L().Info("node peerID", zap.String("peerID", node.ID().String()))
+
 	for _, addr := range addrs {
 		zap.L().Info("libp2p node address", zap.String("addr", addr.String()))
+	}
+
+	if pingAddr != "" {
+		go func() {
+			zap.L().Info("waiting 5 seconds for relay and routing to warm up before pinging...")
+			time.Sleep(5 * time.Second)
+			if err := network.PingPeer(ctx, node, ps, pingAddr, 5); err != nil {
+				zap.L().Error("failed to ping peer", zap.Error(err))
+			}
+		}()
 	}
 
 	<-ctx.Done()
