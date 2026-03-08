@@ -69,6 +69,8 @@ func run(cfg *config.Config) error {
 			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.Network.ListenPort),
 			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.Network.ListenPort),
 		),
+		libp2p.NATPortMap(),
+		libp2p.ForceReachabilityPublic(),
 		libp2p.EnableNATService(),
 		libp2p.EnableRelayService(),
 		libp2p.ConnectionManager(cm),

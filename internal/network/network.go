@@ -54,7 +54,7 @@ func NewWorkerHost(ctx context.Context, priv crypto.PrivKey, listenPort int, min
 	cm, err := connmgr.NewConnManager(
 		minPeers,
 		maxPeers,
-		connmgr.WithGracePeriod(time.Minute), 
+		connmgr.WithGracePeriod(time.Minute),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
