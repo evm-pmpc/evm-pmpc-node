@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/evm-pmpc/evm-pmpc-node/api"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/discovery"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/network"
@@ -54,6 +55,27 @@ func run(cfg *config.Config, pingAddr string) error {
 			return fmt.Errorf("invalid bootstrap peer info (%s): %w", m, err)
 		}
 		bootstrapAddrs = append(bootstrapAddrs, *info)
+	}
+
+	if cfg.Network.BootstrapAPI != "" {
+		zap.L().Info("fetching dynamic bootstrap addresses from API", zap.String("url", cfg.Network.BootstrapAPI))
+		apiAddrs, err := api.FetchBootstrapAddresses(cfg.Network.BootstrapAPI)
+		if err != nil {
+			zap.L().Warn("failed to fetch from bootstrap API, continuing with static addrs", zap.Error(err))
+		} else {
+			for _, m := range apiAddrs {
+				ma, err := multiaddr.NewMultiaddr(m)
+				if err != nil {
+					continue
+				}
+				info, err := peer.AddrInfoFromP2pAddr(ma)
+				if err != nil {
+					continue
+				}
+				bootstrapAddrs = append(bootstrapAddrs, *info)
+			}
+			zap.L().Info("successfully merged dynamic bootstrap addresses", zap.Int("total_addrs", len(bootstrapAddrs)))
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

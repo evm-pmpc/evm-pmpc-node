@@ -1,5 +1,8 @@
 identity:
   key_file: "bootstrap.key"
+api:
+  enabled: true
+  port: 8080
 network:
   listen_port: 4001
   min_peers: 50

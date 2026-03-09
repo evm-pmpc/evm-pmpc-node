@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/evm-pmpc/evm-pmpc-node/api"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/config"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/keygen"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/logger"
@@ -84,6 +85,13 @@ func run(cfg *config.Config) error {
 			zap.L().Error("failed to cleanly close host", zap.Error(err))
 		}
 	}()
+
+	if cfg.API.Enabled {
+		apiServer := api.NewServer(host, cfg.API.Port)
+		if err := apiServer.Start(); err != nil {
+			return fmt.Errorf("failed to start api server: %w", err)
+		}
+	}
 
 	dhtInstance, err := kadDHT.New(ctx, host,
 		kadDHT.Mode(kadDHT.ModeServer),

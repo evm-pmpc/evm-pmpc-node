@@ -12,9 +12,15 @@ import (
 
 type Config struct {
 	Identity  IdentityConfig  `koanf:"identity"`
+	API       APIConfig       `koanf:"api"`
 	Network   NetworkConfig   `koanf:"network"`
 	Discovery DiscoveryConfig `koanf:"discovery"`
 	Logging   LoggingConfig   `koanf:"logging"`
+}
+
+type APIConfig struct {
+	Enabled bool `koanf:"enabled"`
+	Port    int  `koanf:"port"`
 }
 
 type IdentityConfig struct {
@@ -26,6 +32,7 @@ type NetworkConfig struct {
 	MinPeers       int      `koanf:"min_peers"`
 	MaxPeers       int      `koanf:"max_peers"`
 	BootstrapAddrs []string `koanf:"bootstrap_addrs"`
+	BootstrapAPI   string   `koanf:"bootstrap_api"`
 }
 
 type DiscoveryConfig struct {
