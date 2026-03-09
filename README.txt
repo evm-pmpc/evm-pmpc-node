@@ -28,15 +28,20 @@ Run the following command to build the node:
 
 make build
 
+
 To deploy it:
 
 make docker-node
 make docker-bootstrap
 
+
 To run a node:
+
 make run-worker
 
+
 To run a bootstrap node:
+
 make run-bootstrap
 
 -----
