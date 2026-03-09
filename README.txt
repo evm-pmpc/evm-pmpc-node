@@ -26,17 +26,18 @@ users which allows you to perform MPC operations.
 
 Run the following command to build the node:
 
-On Linux/Mac:
-./build.sh
+make build
 
-On Windows:
-build.bat
+To deploy it:
+
+make docker-node
+make docker-bootstrap
 
 To run a node:
-./bin/evm-pmpc-node
+make run-worker
 
 To run a bootstrap node:
-./bin/evm-pmpc-bootstrap
+make run-bootstrap
 
 -----
 TODO:

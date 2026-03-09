@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/config"
@@ -18,22 +19,40 @@ import (
 )
 
 func SetupDiscovery(ctx context.Context, h host.Host, cfg config.DiscoveryConfig, bootstrapAddrs []peer.AddrInfo) (*kadDht.IpfsDHT, error) {
-	var wg sync.WaitGroup
-	for _, peerinfo := range bootstrapAddrs {
-		wg.Add(1)
-		go func(p peer.AddrInfo) {
-			defer wg.Done()
-			if err := h.Connect(ctx, p); err != nil {
-				zap.L().Warn("failed to connect to bootstrap node", zap.String("peerID", p.ID.String()), zap.Error(err))
-			} else {
-				zap.L().Info("connected to bootstrap node", zap.String("peerID", p.ID.String()))
-			}
-		}(peerinfo)
-	}
-	wg.Wait()
+	if len(bootstrapAddrs) > 0 {
+		zap.L().Info("attempting to connect to bootstrap nodes...", zap.Int("count", len(bootstrapAddrs)))
+		for {
+			var wg sync.WaitGroup
+			var connected int32
 
-	// DHT relies on having connected peers. Proceeding without connection is okay since we act locally,
-	// but routing capabilities would be limited till connection goes through.
+			for _, peerinfo := range bootstrapAddrs {
+				wg.Add(1)
+				go func(p peer.AddrInfo) {
+					defer wg.Done()
+					if err := h.Connect(ctx, p); err != nil {
+						zap.L().Debug("failed to connect to bootstrap node", zap.String("peerID", p.ID.String()), zap.Error(err))
+					} else {
+						zap.L().Info("connected to bootstrap node", zap.String("peerID", p.ID.String()))
+						atomic.AddInt32(&connected, 1)
+					}
+				}(peerinfo)
+			}
+			wg.Wait()
+
+			if connected > 0 {
+				zap.L().Info("successfully connected to bootstrap network", zap.Int32("connected_nodes", connected))
+				break
+			}
+
+			zap.L().Warn("could not connect to any bootstrap nodes, retrying in 5 seconds...")
+
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled while waiting for bootstrap node")
+			}
+		}
+	}
 
 	dht, err := kadDht.New(ctx, h, kadDht.ProtocolPrefix(protocol.ID(cfg.ProtocolPrefix)))
 	if err != nil {

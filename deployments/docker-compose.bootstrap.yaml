@@ -1,0 +1,17 @@
+services:
+  bootstrap:
+    build:
+      context: ../
+      dockerfile: build/Dockerfile.bootstrapnode
+    container_name: evm-pmpc-bootstrap
+    ports:
+      - "4001:4001/tcp"
+      - "4001:4001/udp"
+    volumes:
+      # Map a persistent local folder to /data inside the container
+      # This ensures bootstrap.key survives container restarts
+      - ../data/bootstrap:/data
+    # Use environment variables to override the config file dynamically
+    environment:
+      - PMPC_IDENTITY_KEY_FILE=/data/bootstrap.key
+    restart: unless-stopped

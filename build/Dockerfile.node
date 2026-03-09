@@ -1,0 +1,23 @@
+FROM golang:alpine as builder
+
+WORKDIR /app
+
+# Cache dependencies first
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Then build the rest
+COPY . .
+RUN go build -o /app/evm-pmpc-node ./cmd/node/main.go
+
+FROM alpine:latest
+
+WORKDIR /app
+
+COPY --from=builder /app/evm-pmpc-node .
+COPY config.yaml .
+
+EXPOSE 4002/tcp
+EXPOSE 4002/udp
+
+CMD ["./evm-pmpc-node", "-config", "config.yaml"]

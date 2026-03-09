@@ -1,0 +1,16 @@
+services:
+  worker-1:
+    build:
+      context: ../
+      dockerfile: build/Dockerfile.node
+    container_name: evm-pmpc-worker-1
+    ports:
+      - "4002:4002/tcp"
+      - "4002:4002/udp"
+    volumes:
+      # Map a distinct persistent folder for this specific worker
+      - ../data/worker-1:/data
+    environment:
+      # Override the key_file path since /data is our mounted volume
+      - PMPC_IDENTITY_KEY_FILE=/data/worker.key
+    restart: unless-stopped

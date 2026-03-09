@@ -1,0 +1,21 @@
+FROM golang:alpine as builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN go build -o /app/evm-pmpc-bootstrap ./cmd/bootstrapnode/main.go
+
+FROM alpine:latest
+
+WORKDIR /app
+
+COPY --from=builder /app/evm-pmpc-bootstrap .
+COPY config-bootstrap.yaml .
+
+EXPOSE 4001/tcp
+EXPOSE 4001/udp
+
+CMD ["./evm-pmpc-bootstrap", "-config", "config-bootstrap.yaml"]
