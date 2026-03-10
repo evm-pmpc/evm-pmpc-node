@@ -87,7 +87,7 @@ func run(cfg *config.Config) error {
 	}()
 
 	if cfg.API.Enabled {
-		apiServer := api.NewServer(host, cfg.API.Port)
+		apiServer := api.NewServer(host, cfg.API.Port, cfg.API.AuthToken)
 		if err := apiServer.Start(); err != nil {
 			return fmt.Errorf("failed to start api server: %w", err)
 		}

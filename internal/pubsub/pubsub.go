@@ -13,6 +13,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	MaxMessageSize = 1 << 20 // 1 MB
+	MaxMessageRate = 10      // max messages per second per peer
+)
+
 type Message struct {
 	Type      string          `json:"type"`
 	SenderID  string          `json:"sender_id"`
@@ -23,28 +28,37 @@ type Message struct {
 type MessageHandler func(msg *Message)
 
 type PubSubService struct {
-	ctx      context.Context
-	host     host.Host
-	ps       *libp2pPubsub.PubSub
-	topics   map[string]*libp2pPubsub.Topic
-	subs     map[string]*libp2pPubsub.Subscription
-	handlers map[string][]MessageHandler
-	mu       sync.RWMutex
+	ctx       context.Context
+	host      host.Host
+	ps        *libp2pPubsub.PubSub
+	topics    map[string]*libp2pPubsub.Topic
+	subs      map[string]*libp2pPubsub.Subscription
+	handlers  map[string][]MessageHandler
+	rateLimit map[peer.ID]*rateLimiter
+	mu        sync.RWMutex
+}
+
+type rateLimiter struct {
+	count     int
+	resetTime time.Time
 }
 
 func NewPubSubService(ctx context.Context, h host.Host) (*PubSubService, error) {
-	ps, err := libp2pPubsub.NewGossipSub(ctx, h)
+	ps, err := libp2pPubsub.NewGossipSub(ctx, h,
+		libp2pPubsub.WithMaxMessageSize(MaxMessageSize),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GossipSub: %w", err)
 	}
 
 	return &PubSubService{
-		ctx:      ctx,
-		host:     h,
-		ps:       ps,
-		topics:   make(map[string]*libp2pPubsub.Topic),
-		subs:     make(map[string]*libp2pPubsub.Subscription),
-		handlers: make(map[string][]MessageHandler),
+		ctx:       ctx,
+		host:      h,
+		ps:        ps,
+		topics:    make(map[string]*libp2pPubsub.Topic),
+		subs:      make(map[string]*libp2pPubsub.Subscription),
+		handlers:  make(map[string][]MessageHandler),
+		rateLimit: make(map[peer.ID]*rateLimiter),
 	}, nil
 }
 
@@ -106,6 +120,10 @@ func (p *PubSubService) Publish(topicName string, msgType string, payload interf
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
+	if len(msgBytes) > MaxMessageSize {
+		return fmt.Errorf("message exceeds max size (%d > %d bytes)", len(msgBytes), MaxMessageSize)
+	}
+
 	return topic.Publish(p.ctx, msgBytes)
 }
 
@@ -119,6 +137,22 @@ func (p *PubSubService) ListPeers(topicName string) []peer.ID {
 	}
 
 	return topic.ListPeers()
+}
+
+func (p *PubSubService) isRateLimited(peerID peer.ID) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	rl, exists := p.rateLimit[peerID]
+	now := time.Now()
+
+	if !exists || now.After(rl.resetTime) {
+		p.rateLimit[peerID] = &rateLimiter{count: 1, resetTime: now.Add(time.Second)}
+		return false
+	}
+
+	rl.count++
+	return rl.count > MaxMessageRate
 }
 
 func (p *PubSubService) readLoop(topicName string, sub *libp2pPubsub.Subscription) {
@@ -136,9 +170,24 @@ func (p *PubSubService) readLoop(topicName string, sub *libp2pPubsub.Subscriptio
 			continue
 		}
 
+		if p.isRateLimited(msg.ReceivedFrom) {
+			zap.L().Warn("rate limited peer", zap.String("peer", msg.ReceivedFrom.String()))
+			continue
+		}
+
+		if len(msg.Data) > MaxMessageSize {
+			zap.L().Warn("dropped oversized message", zap.String("peer", msg.ReceivedFrom.String()), zap.Int("size", len(msg.Data)))
+			continue
+		}
+
 		var parsedMsg Message
 		if err := json.Unmarshal(msg.Data, &parsedMsg); err != nil {
 			zap.L().Warn("received malformed pubsub message", zap.String("topic", topicName), zap.Error(err))
+			continue
+		}
+
+		if parsedMsg.Type == "" {
+			zap.L().Warn("rejected message with empty type", zap.String("peer", msg.ReceivedFrom.String()))
 			continue
 		}
 

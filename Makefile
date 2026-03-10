@@ -1,4 +1,4 @@
-.PHONY: all clean build build-node build-bootstrap docker-node docker-bootstrap run-bootstrap run-worker
+.PHONY: all clean build build-node build-bootstrap docker-node docker-bootstrap run-bootstrap run-worker test
 
 BIN_DIR = bin
 BUILD_DIR = build
@@ -8,6 +8,10 @@ NODE_BIN = $(BIN_DIR)/evm-pmpc-node
 BOOTSTRAP_BIN = $(BIN_DIR)/evm-pmpc-bootstrap
 
 all: build
+
+test:
+	@echo "[test] - Running unit tests"
+	go test ./... -v -count=1
 
 clean:
 	@echo "[clean] - Removing binaries"

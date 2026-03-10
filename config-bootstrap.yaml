@@ -3,6 +3,7 @@ identity:
 api:
   enabled: true
   port: 1629
+  auth_token: ""
 network:
   listen_port: 4001
   min_peers: 50

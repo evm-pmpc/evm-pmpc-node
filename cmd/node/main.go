@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/evm-pmpc/evm-pmpc-node/api"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
@@ -24,7 +23,6 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the config file")
-	pingAddr := flag.String("ping", "", "optional peer address to ping after connecting")
 	flag.Parse()
 
 	logger.Init()
@@ -39,12 +37,12 @@ func main() {
 		logger.InitJSON()
 	}
 
-	if err := run(cfg, *pingAddr); err != nil {
+	if err := run(cfg); err != nil {
 		zap.L().Fatal("application failed", zap.Error(err))
 	}
 }
 
-func run(cfg *config.Config, pingAddr string) error {
+func run(cfg *config.Config) error {
 	var bootstrapAddrs []peer.AddrInfo
 	for _, m := range cfg.Network.BootstrapAddrs {
 		ma, err := multiaddr.NewMultiaddr(m)
@@ -75,7 +73,7 @@ func run(cfg *config.Config, pingAddr string) error {
 				}
 				bootstrapAddrs = append(bootstrapAddrs, *info)
 			}
-			zap.L().Info("successfully merged dynamic bootstrap addresses", zap.Int("total_addrs", len(bootstrapAddrs)))
+			zap.L().Info("merged dynamic bootstrap addresses", zap.Int("total_addrs", len(bootstrapAddrs)))
 		}
 	}
 
@@ -96,8 +94,6 @@ func run(cfg *config.Config, pingAddr string) error {
 			zap.L().Error("failed to cleanly close host", zap.Error(err))
 		}
 	}()
-
-	ps := network.SetupPing(node)
 
 	if err := discovery.InitMDNS(node, cfg.Discovery.Rendezvous); err != nil {
 		return fmt.Errorf("failed to start mDNS: %w", err)
@@ -122,20 +118,9 @@ func run(cfg *config.Config, pingAddr string) error {
 		return fmt.Errorf("failed to get node addresses: %w", err)
 	}
 
-	zap.L().Info("node peerID", zap.String("peerID", node.ID().String()))
-
+	zap.L().Info("node started", zap.String("peerID", node.ID().String()))
 	for _, addr := range addrs {
-		zap.L().Info("libp2p node address", zap.String("addr", addr.String()))
-	}
-
-	if pingAddr != "" {
-		go func() {
-			zap.L().Info("waiting 5 seconds for relay and routing to warm up before pinging...")
-			time.Sleep(5 * time.Second)
-			if err := network.PingPeer(ctx, node, ps, pingAddr, 5); err != nil {
-				zap.L().Error("failed to ping peer", zap.Error(err))
-			}
-		}()
+		zap.L().Info("listening", zap.String("addr", addr.String()))
 	}
 
 	pubsubService, err := pubsub.NewPubSubService(ctx, node)
@@ -158,36 +143,8 @@ func run(cfg *config.Config, pingAddr string) error {
 			zap.String("topic", topicName),
 			zap.String("type", msg.Type),
 			zap.String("from", msg.SenderID),
-			zap.Int64("timestamp", msg.Timestamp),
-			zap.String("payload", string(msg.Payload)),
 		)
 	})
-
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				peers := pubsubService.ListPeers(topicName)
-				if len(peers) > 0 {
-					err := pubsubService.Publish(topicName, "heartbeat", map[string]interface{}{
-						"peer_id":     node.ID().String(),
-						"peer_count":  len(peers),
-						"listen_port": cfg.Network.ListenPort,
-					})
-					if err != nil {
-						zap.L().Debug("failed to publish heartbeat", zap.Error(err))
-					} else {
-						zap.L().Debug("heartbeat sent", zap.Int("topic_peers", len(peers)))
-					}
-				}
-			}
-		}
-	}()
 
 	<-ctx.Done()
 

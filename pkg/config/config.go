@@ -20,8 +20,9 @@ type Config struct {
 }
 
 type APIConfig struct {
-	Enabled bool `koanf:"enabled"`
-	Port    int  `koanf:"port"`
+	Enabled   bool   `koanf:"enabled"`
+	Port      int    `koanf:"port"`
+	AuthToken string `koanf:"auth_token"`
 }
 
 type IdentityConfig struct {
