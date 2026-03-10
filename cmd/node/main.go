@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/evm-pmpc/evm-pmpc-node/api"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
@@ -23,6 +24,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the config file")
+	pingAddr := flag.String("ping", "", "peer address to ping after connecting")
 	flag.Parse()
 
 	logger.Init()
@@ -37,12 +39,12 @@ func main() {
 		logger.InitJSON()
 	}
 
-	if err := run(cfg); err != nil {
+	if err := run(cfg, *pingAddr); err != nil {
 		zap.L().Fatal("application failed", zap.Error(err))
 	}
 }
 
-func run(cfg *config.Config) error {
+func run(cfg *config.Config, pingAddr string) error {
 	var bootstrapAddrs []peer.AddrInfo
 	for _, m := range cfg.Network.BootstrapAddrs {
 		ma, err := multiaddr.NewMultiaddr(m)
@@ -95,6 +97,8 @@ func run(cfg *config.Config) error {
 		}
 	}()
 
+	ps := network.SetupPing(node)
+
 	if err := discovery.InitMDNS(node, cfg.Discovery.Rendezvous); err != nil {
 		return fmt.Errorf("failed to start mDNS: %w", err)
 	}
@@ -121,6 +125,15 @@ func run(cfg *config.Config) error {
 	zap.L().Info("node started", zap.String("peerID", node.ID().String()))
 	for _, addr := range addrs {
 		zap.L().Info("listening", zap.String("addr", addr.String()))
+	}
+
+	if pingAddr != "" {
+		go func() {
+			time.Sleep(5 * time.Second)
+			if err := network.PingPeer(ctx, node, ps, pingAddr, 5); err != nil {
+				zap.L().Error("failed to ping peer", zap.Error(err))
+			}
+		}()
 	}
 
 	pubsubService, err := pubsub.NewPubSubService(ctx, node)
