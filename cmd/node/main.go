@@ -12,6 +12,7 @@ import (
 	"github.com/evm-pmpc/evm-pmpc-node/internal/dht"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/discovery"
 	"github.com/evm-pmpc/evm-pmpc-node/internal/network"
+	"github.com/evm-pmpc/evm-pmpc-node/internal/pubsub"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/config"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/keygen"
 	"github.com/evm-pmpc/evm-pmpc-node/pkg/logger"
@@ -136,6 +137,57 @@ func run(cfg *config.Config, pingAddr string) error {
 			}
 		}()
 	}
+
+	pubsubService, err := pubsub.NewPubSubService(ctx, node)
+	if err != nil {
+		return fmt.Errorf("failed to create pubsub service: %w", err)
+	}
+	defer pubsubService.Close()
+
+	topicName := cfg.PubSub.Topic
+	if topicName == "" {
+		topicName = "evm-pmpc-general"
+	}
+
+	if _, err := pubsubService.JoinTopic(topicName); err != nil {
+		return fmt.Errorf("failed to join pubsub topic: %w", err)
+	}
+
+	pubsubService.Subscribe(topicName, func(msg *pubsub.Message) {
+		zap.L().Info("pubsub message received",
+			zap.String("topic", topicName),
+			zap.String("type", msg.Type),
+			zap.String("from", msg.SenderID),
+			zap.Int64("timestamp", msg.Timestamp),
+			zap.String("payload", string(msg.Payload)),
+		)
+	})
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				peers := pubsubService.ListPeers(topicName)
+				if len(peers) > 0 {
+					err := pubsubService.Publish(topicName, "heartbeat", map[string]interface{}{
+						"peer_id":     node.ID().String(),
+						"peer_count":  len(peers),
+						"listen_port": cfg.Network.ListenPort,
+					})
+					if err != nil {
+						zap.L().Debug("failed to publish heartbeat", zap.Error(err))
+					} else {
+						zap.L().Debug("heartbeat sent", zap.Int("topic_peers", len(peers)))
+					}
+				}
+			}
+		}
+	}()
 
 	<-ctx.Done()
 

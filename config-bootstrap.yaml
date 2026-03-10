@@ -11,6 +11,8 @@ network:
 discovery:
   rendezvous: "evm-pmpc-rendezvous-room"
   protocol_prefix: "/evm-pmpc-node/0.1.0"
+pubsub:
+  topic: "evm-pmpc-general"
 logging:
   level: "info"
   format: "console"

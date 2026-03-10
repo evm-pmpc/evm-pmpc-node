@@ -15,6 +15,7 @@ type Config struct {
 	API       APIConfig       `koanf:"api"`
 	Network   NetworkConfig   `koanf:"network"`
 	Discovery DiscoveryConfig `koanf:"discovery"`
+	PubSub    PubSubConfig    `koanf:"pubsub"`
 	Logging   LoggingConfig   `koanf:"logging"`
 }
 
@@ -38,6 +39,10 @@ type NetworkConfig struct {
 type DiscoveryConfig struct {
 	Rendezvous     string `koanf:"rendezvous"`
 	ProtocolPrefix string `koanf:"protocol_prefix"`
+}
+
+type PubSubConfig struct {
+	Topic string `koanf:"topic"`
 }
 
 type LoggingConfig struct {
