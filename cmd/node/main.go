@@ -159,6 +159,27 @@ func run(cfg *config.Config, pingAddr string) error {
 		)
 	})
 
+	// Add a periodic heartbeat to verify communication
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				peers := pubsubService.ListPeers(topicName)
+				zap.L().Info("pubsub topic status",
+					zap.String("topic", topicName),
+					zap.Int("peer_count", len(peers)))
+
+				if err := pubsubService.Publish(topicName, "heartbeat", map[string]string{"status": "alive"}); err != nil {
+					zap.L().Warn("failed to publish heartbeat", zap.Error(err))
+				}
+			}
+		}
+	}()
+
 	<-ctx.Done()
 
 	zap.L().Info("received graceful shutdown signal")

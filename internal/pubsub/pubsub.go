@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	MaxMessageSize = 1 << 20 // 1 MB
-	MaxMessageRate = 10      // max messages per second per peer
+	MaxMessageSize = 1 << 20 
+	MaxMessageRate = 10      
 )
 
 type Message struct {

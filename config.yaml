@@ -8,7 +8,7 @@ network:
   min_peers: 50
   max_peers: 100
   bootstrap_addrs:
-    - "/ip4/140.238.226.231/tcp/4001/p2p/12D3KooWL3djSAb7XWKMGVZCNbQEchV9s3TKcbgx2Fm1E34Rqeaa"
+    - "/ip4/140.238.226.231/tcp/4001/p2p/12D3KooWR7WsXRCfsS2X5u7mcu39oJ3R4CzcbBgep6pXZvjjj9xp"
   bootstrap_api: "http://140.238.226.231:1629"
 discovery:
   rendezvous: "evm-pmpc-rendezvous-room"
