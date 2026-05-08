@@ -44,7 +44,9 @@ To run a bootstrap node:
 
 make run-bootstrap
 
------
-TODO:
------
-- when a bootstrap node starts, it sends its peerID to 'api'.
+
+Bootstrap nodes self-publish their multiaddrs through the HTTP endpoint
+GET /api/v1/addresses on port 1629; workers pull the list at startup
+when `network.bootstrap_api` is set in their config.
+
+For an in-depth tour of the codebase, see docs/architecture.md.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -25,7 +26,10 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to the config file")
 	flag.Parse()
 
-	logger.Init()
+	if err := logger.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize bootstrap logger: %v\n", err)
+		os.Exit(1)
+	}
 	defer zap.L().Sync()
 
 	cfg, err := config.Load(*configPath)
@@ -33,8 +37,8 @@ func main() {
 		zap.L().Fatal("failed to load configuration", zap.Error(err), zap.String("path", *configPath))
 	}
 
-	if cfg.Logging.Format == "json" {
-		logger.InitJSON()
+	if err := logger.Configure(cfg.Logging.Level, cfg.Logging.Format); err != nil {
+		zap.L().Fatal("failed to apply configured logger", zap.Error(err))
 	}
 
 	if err := run(cfg); err != nil {
@@ -43,38 +47,9 @@ func main() {
 }
 
 func run(cfg *config.Config) error {
-	var bootstrapAddrs []peer.AddrInfo
-	for _, m := range cfg.Network.BootstrapAddrs {
-		ma, err := multiaddr.NewMultiaddr(m)
-		if err != nil {
-			return fmt.Errorf("invalid bootstrap address in config (%s): %w", m, err)
-		}
-		info, err := peer.AddrInfoFromP2pAddr(ma)
-		if err != nil {
-			return fmt.Errorf("invalid bootstrap peer info (%s): %w", m, err)
-		}
-		bootstrapAddrs = append(bootstrapAddrs, *info)
-	}
-
-	if cfg.Network.BootstrapAPI != "" {
-		zap.L().Info("fetching dynamic bootstrap addresses from API", zap.String("url", cfg.Network.BootstrapAPI))
-		apiAddrs, err := api.FetchBootstrapAddresses(cfg.Network.BootstrapAPI)
-		if err != nil {
-			zap.L().Warn("failed to fetch from bootstrap API, continuing with static addrs", zap.Error(err))
-		} else {
-			for _, m := range apiAddrs {
-				ma, err := multiaddr.NewMultiaddr(m)
-				if err != nil {
-					continue
-				}
-				info, err := peer.AddrInfoFromP2pAddr(ma)
-				if err != nil {
-					continue
-				}
-				bootstrapAddrs = append(bootstrapAddrs, *info)
-			}
-			zap.L().Info("merged dynamic bootstrap addresses", zap.Int("total_addrs", len(bootstrapAddrs)))
-		}
+	bootstrapAddrs, err := resolveBootstrapAddrs(cfg)
+	if err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -85,7 +60,7 @@ func run(cfg *config.Config) error {
 		return fmt.Errorf("failed to handle identity key: %w", err)
 	}
 
-	node, err := network.NewWorkerHost(ctx, priv, cfg.Network.ListenPort, cfg.Network.MinPeers, cfg.Network.MaxPeers, bootstrapAddrs)
+	node, err := network.NewWorkerHost(priv, cfg.Network.ListenPort, cfg.Network.MinPeers, cfg.Network.MaxPeers, bootstrapAddrs)
 	if err != nil {
 		return fmt.Errorf("failed to create host: %w", err)
 	}
@@ -150,4 +125,46 @@ func run(cfg *config.Config) error {
 
 	zap.L().Info("received graceful shutdown signal")
 	return nil
+}
+
+// resolveBootstrapAddrs builds the union of statically-configured bootstrap
+// addresses and any addresses dynamically returned by the bootstrap API
+// (when configured). API failures are non-fatal — we simply fall back to
+// the static set.
+func resolveBootstrapAddrs(cfg *config.Config) ([]peer.AddrInfo, error) {
+	var bootstrapAddrs []peer.AddrInfo
+	for _, m := range cfg.Network.BootstrapAddrs {
+		ma, err := multiaddr.NewMultiaddr(m)
+		if err != nil {
+			return nil, fmt.Errorf("invalid bootstrap address in config (%s): %w", m, err)
+		}
+		info, err := peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			return nil, fmt.Errorf("invalid bootstrap peer info (%s): %w", m, err)
+		}
+		bootstrapAddrs = append(bootstrapAddrs, *info)
+	}
+
+	if cfg.Network.BootstrapAPI != "" {
+		zap.L().Info("fetching dynamic bootstrap addresses from API", zap.String("url", cfg.Network.BootstrapAPI))
+		apiAddrs, err := api.FetchBootstrapAddresses(cfg.Network.BootstrapAPI)
+		if err != nil {
+			zap.L().Warn("failed to fetch from bootstrap API, continuing with static addrs", zap.Error(err))
+			return bootstrapAddrs, nil
+		}
+		for _, m := range apiAddrs {
+			ma, err := multiaddr.NewMultiaddr(m)
+			if err != nil {
+				continue
+			}
+			info, err := peer.AddrInfoFromP2pAddr(ma)
+			if err != nil {
+				continue
+			}
+			bootstrapAddrs = append(bootstrapAddrs, *info)
+		}
+		zap.L().Info("merged dynamic bootstrap addresses", zap.Int("total_addrs", len(bootstrapAddrs)))
+	}
+
+	return bootstrapAddrs, nil
 }

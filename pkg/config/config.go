@@ -58,10 +58,13 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to load config file: %w", err)
 	}
 
-	k.Load(env.Provider("PMPC_", ".", func(s string) string {
+	envProvider := env.Provider("PMPC_", ".", func(s string) string {
 		return strings.ReplaceAll(strings.ToLower(
 			strings.TrimPrefix(s, "PMPC_")), "_", ".")
-	}), nil)
+	})
+	if err := k.Load(envProvider, nil); err != nil {
+		return nil, fmt.Errorf("failed to load env overrides: %w", err)
+	}
 
 	var cfg Config
 	if err := k.Unmarshal("", &cfg); err != nil {

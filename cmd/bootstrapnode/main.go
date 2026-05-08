@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -20,11 +21,16 @@ import (
 	"go.uber.org/zap"
 )
 
+const apiShutdownTimeout = 10 * time.Second
+
 func main() {
 	configPath := flag.String("config", "config-bootstrap.yaml", "path to the config file")
 	flag.Parse()
 
-	logger.Init()
+	if err := logger.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize bootstrap logger: %v\n", err)
+		os.Exit(1)
+	}
 	defer zap.L().Sync()
 
 	cfg, err := config.Load(*configPath)
@@ -32,8 +38,8 @@ func main() {
 		zap.L().Fatal("failed to load configuration", zap.Error(err), zap.String("path", *configPath))
 	}
 
-	if cfg.Logging.Format == "json" {
-		logger.InitJSON()
+	if err := logger.Configure(cfg.Logging.Level, cfg.Logging.Format); err != nil {
+		zap.L().Fatal("failed to apply configured logger", zap.Error(err))
 	}
 
 	if err := run(cfg); err != nil {
@@ -86,11 +92,19 @@ func run(cfg *config.Config) error {
 		}
 	}()
 
+	var apiServer *api.Server
 	if cfg.API.Enabled {
-		apiServer := api.NewServer(host, cfg.API.Port, cfg.API.AuthToken)
+		apiServer = api.NewServer(host, cfg.API.Port, cfg.API.AuthToken)
 		if err := apiServer.Start(); err != nil {
 			return fmt.Errorf("failed to start api server: %w", err)
 		}
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), apiShutdownTimeout)
+			defer cancel()
+			if err := apiServer.Stop(shutdownCtx); err != nil {
+				zap.L().Error("failed to cleanly stop api server", zap.Error(err))
+			}
+		}()
 	}
 
 	dhtInstance, err := kadDHT.New(ctx, host,
@@ -119,7 +133,18 @@ func run(cfg *config.Config) error {
 		)
 	}
 
-	<-ctx.Done()
+	// Wait for either a shutdown signal or the API server to crash.
+	if apiServer != nil {
+		select {
+		case <-ctx.Done():
+		case err := <-apiServer.Err():
+			if err != nil {
+				return fmt.Errorf("api server exited with error: %w", err)
+			}
+		}
+	} else {
+		<-ctx.Done()
+	}
 
 	zap.L().Info("received graceful shutdown signal")
 	return nil

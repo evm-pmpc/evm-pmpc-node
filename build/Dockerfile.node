@@ -2,11 +2,9 @@ FROM golang:alpine as builder
 
 WORKDIR /app
 
-# Cache dependencies first
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Then build the rest
 COPY . .
 RUN go build -o /app/evm-pmpc-node ./cmd/node/main.go
 

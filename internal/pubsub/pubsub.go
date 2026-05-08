@@ -14,8 +14,25 @@ import (
 )
 
 const (
+	// MaxMessageSize is the hard ceiling on a single inbound or outbound
+	// pubsub message, in bytes.
 	MaxMessageSize = 1 << 20 // 1 MB
-	MaxMessageRate = 10      // max messages per second per peer
+
+	// MaxMessageRate is the per-peer message budget per rate-limit window.
+	MaxMessageRate = 10
+
+	// rateLimitWindow is the length of one rate-limit window. Combined with
+	// MaxMessageRate, this is a fixed-window per-peer limiter.
+	rateLimitWindow = time.Second
+
+	// rateLimitSweepInterval bounds how often we GC stale per-peer entries
+	// from the rate-limit map. Without this the map grows unboundedly with
+	// the number of unique peers seen across the node's lifetime.
+	rateLimitSweepInterval = 5 * time.Minute
+
+	// readLoopBackoff is the ctx-aware sleep applied after a non-fatal
+	// sub.Next error so the loop doesn't tight-spin on a flaky subscription.
+	readLoopBackoff = 100 * time.Millisecond
 )
 
 type Message struct {
@@ -25,6 +42,10 @@ type Message struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
+// MessageHandler is invoked once per matching pubsub message. Handlers are
+// called synchronously inside the per-topic read loop, so a slow handler
+// throttles its topic — keep handler bodies cheap, or hand work off to a
+// goroutine internally.
 type MessageHandler func(msg *Message)
 
 type PubSubService struct {
@@ -36,6 +57,9 @@ type PubSubService struct {
 	handlers  map[string][]MessageHandler
 	rateLimit map[peer.ID]*rateLimiter
 	mu        sync.RWMutex
+
+	closeOnce sync.Once
+	stopCh    chan struct{}
 }
 
 type rateLimiter struct {
@@ -51,7 +75,7 @@ func NewPubSubService(ctx context.Context, h host.Host) (*PubSubService, error) 
 		return nil, fmt.Errorf("failed to create GossipSub: %w", err)
 	}
 
-	return &PubSubService{
+	svc := &PubSubService{
 		ctx:       ctx,
 		host:      h,
 		ps:        ps,
@@ -59,7 +83,10 @@ func NewPubSubService(ctx context.Context, h host.Host) (*PubSubService, error) 
 		subs:      make(map[string]*libp2pPubsub.Subscription),
 		handlers:  make(map[string][]MessageHandler),
 		rateLimit: make(map[peer.ID]*rateLimiter),
-	}, nil
+		stopCh:    make(chan struct{}),
+	}
+	go svc.runRateLimitSweeper()
+	return svc, nil
 }
 
 func (p *PubSubService) JoinTopic(topicName string) (*libp2pPubsub.Topic, error) {
@@ -78,6 +105,8 @@ func (p *PubSubService) JoinTopic(topicName string) (*libp2pPubsub.Topic, error)
 
 	sub, err := topic.Subscribe()
 	if err != nil {
+		topic.Close()
+		delete(p.topics, topicName)
 		return nil, fmt.Errorf("failed to subscribe to topic %s: %w", topicName, err)
 	}
 	p.subs[topicName] = sub
@@ -147,12 +176,41 @@ func (p *PubSubService) isRateLimited(peerID peer.ID) bool {
 	now := time.Now()
 
 	if !exists || now.After(rl.resetTime) {
-		p.rateLimit[peerID] = &rateLimiter{count: 1, resetTime: now.Add(time.Second)}
+		p.rateLimit[peerID] = &rateLimiter{count: 1, resetTime: now.Add(rateLimitWindow)}
 		return false
 	}
 
 	rl.count++
 	return rl.count > MaxMessageRate
+}
+
+// runRateLimitSweeper periodically drops rate-limit entries whose window has
+// long since expired. This keeps the map's footprint proportional to the
+// recently-active peer set rather than the cumulative one.
+func (p *PubSubService) runRateLimitSweeper() {
+	ticker := time.NewTicker(rateLimitSweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-p.stopCh:
+			return
+		case now := <-ticker.C:
+			p.sweepRateLimit(now)
+		}
+	}
+}
+
+func (p *PubSubService) sweepRateLimit(now time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for id, rl := range p.rateLimit {
+		if now.After(rl.resetTime) {
+			delete(p.rateLimit, id)
+		}
+	}
 }
 
 func (p *PubSubService) readLoop(topicName string, sub *libp2pPubsub.Subscription) {
@@ -163,6 +221,9 @@ func (p *PubSubService) readLoop(topicName string, sub *libp2pPubsub.Subscriptio
 				return
 			}
 			zap.L().Warn("error reading from pubsub topic", zap.String("topic", topicName), zap.Error(err))
+			if !sleepCtx(p.ctx, readLoopBackoff) {
+				return
+			}
 			continue
 		}
 
@@ -191,27 +252,71 @@ func (p *PubSubService) readLoop(topicName string, sub *libp2pPubsub.Subscriptio
 			continue
 		}
 
-		p.mu.RLock()
-		handlers := p.handlers[topicName]
-		p.mu.RUnlock()
-
-		for _, handler := range handlers {
-			handler(&parsedMsg)
-		}
+		p.dispatch(topicName, &parsedMsg)
 	}
 }
 
-func (p *PubSubService) Close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// dispatch fans the message out to every handler for a topic. Each handler
+// is wrapped in a recover() so a panicking handler can't take down the
+// per-topic read loop or the whole process.
+func (p *PubSubService) dispatch(topicName string, msg *Message) {
+	p.mu.RLock()
+	handlers := make([]MessageHandler, len(p.handlers[topicName]))
+	copy(handlers, p.handlers[topicName])
+	p.mu.RUnlock()
 
-	for name, sub := range p.subs {
-		sub.Cancel()
-		zap.L().Debug("cancelled subscription", zap.String("topic", name))
+	for _, handler := range handlers {
+		safeCall(handler, msg, topicName)
 	}
+}
 
-	for name, topic := range p.topics {
-		topic.Close()
-		zap.L().Debug("closed topic", zap.String("topic", name))
+func safeCall(handler MessageHandler, msg *Message, topicName string) {
+	defer func() {
+		if r := recover(); r != nil {
+			zap.L().Error("pubsub handler panicked",
+				zap.String("topic", topicName),
+				zap.Any("panic", r),
+			)
+		}
+	}()
+	handler(msg)
+}
+
+func (p *PubSubService) Close() {
+	p.closeOnce.Do(func() {
+		close(p.stopCh)
+
+		// Snapshot under the lock, then release the lock before calling
+		// into libp2p.Topic/Subscription Close — those can block and may
+		// re-enter this service.
+		p.mu.Lock()
+		subs := p.subs
+		topics := p.topics
+		p.subs = nil
+		p.topics = nil
+		p.handlers = nil
+		p.rateLimit = nil
+		p.mu.Unlock()
+
+		for name, sub := range subs {
+			sub.Cancel()
+			zap.L().Debug("cancelled subscription", zap.String("topic", name))
+		}
+		for name, topic := range topics {
+			if err := topic.Close(); err != nil {
+				zap.L().Debug("failed to close topic", zap.String("topic", name), zap.Error(err))
+			}
+		}
+	})
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }

@@ -7,7 +7,7 @@ services:
     ports:
       - "4001:4001/tcp"
       - "4001:4001/udp"
-      - "8080:8080/tcp"
+      - "1629:1629/tcp"
     volumes:
       # Map a persistent local folder to /data inside the container
       # This ensures bootstrap.key survives container restarts

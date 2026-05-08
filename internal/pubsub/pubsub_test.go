@@ -2,7 +2,9 @@ package pubsub
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -81,5 +83,70 @@ func TestRateLimiter(t *testing.T) {
 
 	if !svc.isRateLimited(testPeer) {
 		t.Error("peer should be rate limited after exceeding max rate")
+	}
+}
+
+func TestSweepRateLimit_DropsExpiredEntries(t *testing.T) {
+	svc := &PubSubService{
+		rateLimit: make(map[peer.ID]*rateLimiter),
+	}
+
+	now := time.Now()
+	expired := peer.ID("expired-peer")
+	fresh := peer.ID("fresh-peer")
+
+	svc.rateLimit[expired] = &rateLimiter{count: 5, resetTime: now.Add(-time.Minute)}
+	svc.rateLimit[fresh] = &rateLimiter{count: 1, resetTime: now.Add(time.Minute)}
+
+	svc.sweepRateLimit(now)
+
+	if _, ok := svc.rateLimit[expired]; ok {
+		t.Error("expired entry should have been swept")
+	}
+	if _, ok := svc.rateLimit[fresh]; !ok {
+		t.Error("fresh entry should have been retained")
+	}
+}
+
+func TestSafeCall_RecoversFromHandlerPanic(t *testing.T) {
+	called := false
+	safeCall(func(msg *Message) {
+		called = true
+		panic("boom")
+	}, &Message{Type: "x"}, "topic")
+
+	if !called {
+		t.Fatal("handler should have run despite panic")
+	}
+}
+
+func TestDispatch_RunsAllHandlersEvenIfOnePanics(t *testing.T) {
+	svc := &PubSubService{
+		handlers: make(map[string][]MessageHandler),
+	}
+
+	var mu sync.Mutex
+	var seen []string
+
+	svc.handlers["t"] = []MessageHandler{
+		func(*Message) {
+			mu.Lock()
+			seen = append(seen, "first")
+			mu.Unlock()
+		},
+		func(*Message) { panic("boom") },
+		func(*Message) {
+			mu.Lock()
+			seen = append(seen, "third")
+			mu.Unlock()
+		},
+	}
+
+	svc.dispatch("t", &Message{Type: "x"})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 2 || seen[0] != "first" || seen[1] != "third" {
+		t.Errorf("expected first+third to run, got %v", seen)
 	}
 }

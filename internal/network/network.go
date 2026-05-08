@@ -1,7 +1,6 @@
 package network
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -13,7 +12,11 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 )
 
-func NewWorkerHost(ctx context.Context, priv crypto.PrivKey, listenPort int, minPeers int, maxPeers int, bootstrapAddrs []peer.AddrInfo) (host.Host, error) {
+// NewWorkerHost constructs the libp2p host used by user-operated worker
+// nodes: NAT-friendly defaults (hole-punch + AutoNATv2 + auto-relay against
+// the supplied bootstrap nodes), plus a connection and resource manager
+// sized by the configured peer floor/ceiling.
+func NewWorkerHost(priv crypto.PrivKey, listenPort int, minPeers int, maxPeers int, bootstrapAddrs []peer.AddrInfo) (host.Host, error) {
 	cm, err := connmgr.NewConnManager(
 		minPeers,
 		maxPeers,
